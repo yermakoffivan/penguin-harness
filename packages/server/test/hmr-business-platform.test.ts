@@ -1,17 +1,13 @@
 /**
  * Business-platform proof: terminals surviving a hot swap via resource
  * claiming, exercised through the repo's own packaged platform (not the
- * standalone fixture bundle).
- *
- * Parked with describe.skip since A1 (refactor(hmr): move the business
- * platform out of the minimal core) trimmed packages/server/src/platform/
- * down to a bare mechanism-only stub with no /terminals routes — the
- * business platform (terminal.ts, platform.ts's `terminals` child, the
- * /terminals* routes) only exists on feat/workflow-hmr. Un-skip this file
- * (and delete this note) once that platform is restored.
+ * standalone fixture bundle) — plus the legacy /terminals routes vs. the
+ * generic /platform/call dispatch route landing on the identical
+ * underlying api.terminals() collection.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
+import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { apiClient, createTestApp, loginAdmin } from "./helpers.js";
 import type { TestApp } from "./helpers.js";
@@ -19,6 +15,11 @@ import type { TestApp } from "./helpers.js";
 const NEXT_BUNDLE_FILE = fileURLToPath(
   new URL("./fixtures/platform-next.bundle.mjs", import.meta.url),
 );
+
+/** The smallest valid web manifest a merged push accepts (see hmr.test.ts's minimalWeb). */
+const MINIMAL_WEB = {
+  "index.html": Buffer.from("<html>business</html>").toString("base64"),
+};
 
 /** Polls until fn() is truthy (live child processes emit output asynchronously). */
 async function until(fn: () => Promise<boolean>, timeoutMs = 3000): Promise<void> {
@@ -30,14 +31,16 @@ async function until(fn: () => Promise<boolean>, timeoutMs = 3000): Promise<void
   }
 }
 
-describe.skip("hot update: business platform (terminals)", () => {
+describe("hot update: business platform (terminals)", () => {
   let t: TestApp;
   let api: ReturnType<typeof apiClient>;
+  let cookie: string;
   let nextBundle: string;
 
   beforeEach(async () => {
     t = await createTestApp();
     const admin = await loginAdmin(t.app);
+    cookie = admin.cookie;
     api = apiClient(t.app, admin.cookie);
     nextBundle = await fs.readFile(NEXT_BUNDLE_FILE, "utf8");
   });
@@ -59,12 +62,26 @@ describe.skip("hot update: business platform (terminals)", () => {
 
     // The bundle bytes travel in the request body — exactly what a remote /
     // HTTP-only runtime receives; the optional git specifier is provenance
-    // only (echoed, never executed).
+    // only (echoed, never executed). One atomic version: the web dist rides
+    // in the same merged push (see /api/hmr/upgrade in routes.ts).
     const source = { repo: "file:///builds/penguin.git", revision: "deadbeef" };
-    const upgraded = await api.post("/api/hmr/platform/upgrade", { bundle: nextBundle, source });
+    const gz = zlib.gzipSync(
+      Buffer.from(JSON.stringify({ bundle: nextBundle, web: { files: MINIMAL_WEB }, source })),
+    );
+    const upgraded = await t.app.request("/api/hmr/upgrade", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/gzip" },
+      body: gz,
+    });
     expect(upgraded.status).toBe(200);
     // The packaged doc is v1; the pushed build is v2 with a 1→2 migrator.
-    expect(await upgraded.json()).toEqual({ status: "ok", mode: "migrated", impl: "next", source });
+    expect(await upgraded.json()).toEqual({
+      status: "ok",
+      mode: "migrated",
+      impl: "next",
+      source,
+      web: { rev: expect.any(String) as string },
+    });
 
     const info = (await (await api.get("/api/hmr/platform")).json()) as {
       impl: string;
@@ -88,5 +105,31 @@ describe.skip("hot update: business platform (terminals)", () => {
       const r = await api.get(`/api/hmr/terminals/${id}`);
       return ((await r.json()) as { output: string }).output.includes("after-upgrade");
     });
+  });
+
+  it("createTerminal via generic dispatch is equivalent to the legacy /terminals route", async () => {
+    // Legacy route: a dedicated handler wired directly to inst.api.createTerminal.
+    const legacy = await api.post("/api/hmr/terminals", { command: "cat" });
+    expect(legacy.status).toBe(201);
+    const { id: legacyId } = (await legacy.json()) as { id: string };
+
+    // Generic dispatch: the exact same method, reached by name instead of by route.
+    const dispatched = await api.post("/api/hmr/platform/call", {
+      method: "createTerminal",
+      args: ["cat", "."],
+    });
+    expect(dispatched.status).toBe(200);
+    const { result } = (await dispatched.json()) as { result: { id: string } };
+
+    // Both landed on the same underlying api.terminals() collection: the
+    // legacy listing route sees both, proving dispatch didn't take a
+    // different code path.
+    const list = (await (await api.get("/api/hmr/terminals")).json()) as {
+      terminals: { id: string; alive: boolean }[];
+    };
+    const ids = list.terminals.map((term) => term.id);
+    expect(ids).toContain(legacyId);
+    expect(ids).toContain(result.id);
+    expect(list.terminals.find((term) => term.id === result.id)?.alive).toBe(true);
   });
 });

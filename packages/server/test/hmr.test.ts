@@ -6,9 +6,8 @@
  * request queueing during a swap.
  *
  * The business-platform proof (terminals surviving a swap via resource
- * claiming) lives in hmr-business-platform.test.ts, parked with
- * describe.skip until the business platform is back (feat/workflow-hmr) —
- * this file only exercises the mechanism, which carries no business methods.
+ * claiming, and the legacy /terminals routes vs. the generic dispatch route)
+ * lives in hmr-business-platform.test.ts.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -144,8 +143,8 @@ describe("hot update", () => {
     expect(body.impl).toBe("packaged");
     expect(body.info.impl).toBe("packaged");
     expect(body.iface.name).toBe("platform");
-    // The packaged default is a bare mechanism-only stub: no business children.
-    expect(Object.keys(body.iface.children)).toEqual([]);
+    // feat/workflow-hmr packages the business platform: terminals ships by default.
+    expect(Object.keys(body.iface.children)).toEqual(["terminals"]);
   });
 
   it("one push moves platform + cli + web together: web reload broadcasts, static hosting flips", async () => {
