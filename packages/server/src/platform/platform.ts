@@ -30,11 +30,16 @@ import { defineIface, keyed, schema, type } from "@prismshadow/penguin-core/kern
 import type { TerminalApi } from "./terminal.js";
 import { TerminalIface, terminalImpl } from "./terminal.js";
 import { spawnShellResource } from "../hmr/resources.js";
+import type { WorkflowApi, WorkflowRegistry, WorkflowTool } from "./workflow.js";
+import { WorkflowIface, workflowImpl } from "./workflow.js";
 
 export interface PlatformApi extends Park {
   info(): Json;
   createTerminal(command: string, cwd: string): Promise<{ id: string }>;
   terminals(): KeyedHandle<TerminalApi>;
+  workflows(): KeyedHandle<WorkflowApi>;
+  workflowTools(): Array<{ workflowId: string; name: string; description: string }>;
+  reseedWorkflow(id: string): void;
 }
 
 export type PlatformCtx = { motd: string };
@@ -43,14 +48,37 @@ export const PlatformIface = defineIface<PlatformApi, PlatformCtx>({
   name: "platform",
   version: 1,
   context: schema<PlatformCtx>(type({ motd: "string" })),
-  methods: ["park", "info", "createTerminal", "terminals"],
-  children: { terminals: keyed(TerminalIface) },
+  methods: [
+    "park",
+    "info",
+    "createTerminal",
+    "terminals",
+    "workflows",
+    "workflowTools",
+    "reseedWorkflow",
+  ],
+  children: { terminals: keyed(TerminalIface), workflows: keyed(WorkflowIface) },
 });
 
 export const platformImpl: Impl<PlatformApi, PlatformCtx> = {
-  children: { terminals: terminalImpl },
+  children: { terminals: terminalImpl, workflows: workflowImpl },
   create(ctx, context, children) {
     const terminals = children.terminals as KeyedHandle<TerminalApi>;
+    const workflows = children.workflows as KeyedHandle<WorkflowApi>;
+    const tools = new Map<string, { workflowId: string; tool: WorkflowTool }>();
+    const registry: WorkflowRegistry = {
+      register(workflowId, tool) {
+        const existing = tools.get(tool.name);
+        if (existing !== undefined) {
+          throw new Error(
+            `tool '${tool.name}' is already registered by workflow '${existing.workflowId}'`,
+          );
+        }
+        tools.set(tool.name, { workflowId, tool });
+        return () => tools.delete(tool.name);
+      },
+    };
+    for (const id of workflows.keys()) workflows.get(id)!.setup(id, registry);
     return {
       park: () => ({ motd: context.motd }),
       info: () => ({
@@ -58,6 +86,7 @@ export const platformImpl: Impl<PlatformApi, PlatformCtx> = {
         ifaceVersion: PlatformIface.version,
         motd: context.motd,
         terminals: terminals.keys(),
+        workflows: workflows.keys(),
       }),
       async createTerminal(command, cwd) {
         const id = `term_${Math.random().toString(36).slice(2, 10)}`;
@@ -68,6 +97,18 @@ export const platformImpl: Impl<PlatformApi, PlatformCtx> = {
         return { id };
       },
       terminals: () => terminals,
+      workflows: () => workflows,
+      workflowTools: () =>
+        [...tools.values()].map(({ workflowId, tool }) => ({
+          workflowId,
+          name: tool.name,
+          description: tool.description,
+        })),
+      reseedWorkflow(id) {
+        const workflow = workflows.get(id);
+        if (workflow === undefined) throw new Error(`No workflow '${id}'.`);
+        workflow.setup(id, registry);
+      },
     };
   },
 };

@@ -144,7 +144,7 @@ describe("hot update", () => {
     expect(body.info.impl).toBe("packaged");
     expect(body.iface.name).toBe("platform");
     // feat/workflow-hmr packages the business platform: terminals ships by default.
-    expect(Object.keys(body.iface.children)).toEqual(["terminals"]);
+    expect(Object.keys(body.iface.children)).toEqual(["terminals", "workflows"]);
   });
 
   it("one push moves platform + cli + web together: web reload broadcasts, static hosting flips", async () => {
