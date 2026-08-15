@@ -17,6 +17,9 @@ const NEXT_BUNDLE_FILE = fileURLToPath(
 );
 
 /** The smallest valid web manifest a merged push accepts (see hmr.test.ts's minimalWeb). */
+/** The cli artifact is never imported by the server, only content-addressed — see hmr.test.ts. */
+const MINIMAL_CLI = "export async function cli(argv) { return 0; }\n";
+
 const MINIMAL_WEB = {
   "index.html": Buffer.from("<html>business</html>").toString("base64"),
 };
@@ -66,7 +69,14 @@ describe("hot update: business platform (terminals)", () => {
     // in the same merged push (see /api/hmr/upgrade in routes.ts).
     const source = { repo: "file:///builds/penguin.git", revision: "deadbeef" };
     const gz = zlib.gzipSync(
-      Buffer.from(JSON.stringify({ bundle: nextBundle, web: { files: MINIMAL_WEB }, source })),
+      Buffer.from(
+        JSON.stringify({
+          platform: nextBundle,
+          cli: MINIMAL_CLI,
+          web: { files: MINIMAL_WEB },
+          source,
+        }),
+      ),
     );
     const upgraded = await t.app.request("/api/hmr/upgrade", {
       method: "POST",

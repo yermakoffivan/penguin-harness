@@ -27,6 +27,7 @@
  */
 import type { Impl, Json, KeyedHandle, Park } from "@prismshadow/penguin-core/kernel";
 import { defineIface, keyed, schema, type } from "@prismshadow/penguin-core/kernel";
+import { ensureCliOnPath } from "./agent-cli-path.js";
 import type { TerminalApi } from "./terminal.js";
 import { TerminalIface, terminalImpl } from "./terminal.js";
 import { spawnShellResource } from "../hmr/resources.js";
@@ -63,6 +64,12 @@ export const PlatformIface = defineIface<PlatformApi, PlatformCtx>({
 export const platformImpl: Impl<PlatformApi, PlatformCtx> = {
   children: { terminals: terminalImpl, workflows: workflowImpl },
   create(ctx, context, children) {
+    // "What PATH does the agent's shell see" is policy (see ../hmr/README.md), not
+    // mechanism: it belongs here, in-process at platform boot, rather than in the
+    // Electron shell that forks the server — that's what makes the fix reach
+    // already-deployed machines via a normal hot push instead of a rebuild. Idempotent,
+    // so re-running it on every create() (including hot swaps) is harmless.
+    ensureCliOnPath();
     const terminals = children.terminals as KeyedHandle<TerminalApi>;
     const workflows = children.workflows as KeyedHandle<WorkflowApi>;
     const tools = new Map<string, { workflowId: string; tool: WorkflowTool }>();
