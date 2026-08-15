@@ -39,7 +39,7 @@ export interface PlatformApi extends Park {
   terminals(): KeyedHandle<TerminalApi>;
   workflows(): KeyedHandle<WorkflowApi>;
   workflowTools(): Array<{ workflowId: string; name: string; description: string }>;
-  reseedWorkflow(id: string): void;
+  reseedWorkflow(id: string, runCtx: import("./workflow.js").WorkflowRunCtx): void;
 }
 
 export type PlatformCtx = { motd: string };
@@ -78,7 +78,6 @@ export const platformImpl: Impl<PlatformApi, PlatformCtx> = {
         return () => tools.delete(tool.name);
       },
     };
-    for (const id of workflows.keys()) workflows.get(id)!.setup(id, registry);
     return {
       park: () => ({ motd: context.motd }),
       info: () => ({
@@ -104,10 +103,10 @@ export const platformImpl: Impl<PlatformApi, PlatformCtx> = {
           name: tool.name,
           description: tool.description,
         })),
-      reseedWorkflow(id) {
+      reseedWorkflow(id, runCtx) {
         const workflow = workflows.get(id);
         if (workflow === undefined) throw new Error(`No workflow '${id}'.`);
-        workflow.setup(id, registry);
+        workflow.setup(id, registry, runCtx);
       },
     };
   },
